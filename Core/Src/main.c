@@ -596,9 +596,9 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, &rx1_byte, 1);
+  HAL_UART_Receive_IT(&huart4, &rx1_byte, 1);
   HAL_UART_Receive_IT(&huart2, &rx2_byte, 1);
-  HAL_UART_Receive_IT(&huart4, (uint8_t*)&Rx_buff[rx_index], 1);
+  HAL_UART_Receive_IT(&huart1, (uint8_t*)&Rx_buff[rx_index], 1);
 
   MPU6050_Init();
   MPU6050_Calibrate();
@@ -1334,7 +1334,7 @@ static void MX_GPIO_Init(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     /* ---- UART4: joystick data ---- */
-    if (huart->Instance == UART4)
+    if (huart->Instance == USART1)
     {
         uint8_t b = Rx_buff[rx_index];
 
@@ -1351,11 +1351,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             else
                 rx_index = 0;   /* overflow guard */
         }
-        HAL_UART_Receive_IT(&huart4, (uint8_t*)&Rx_buff[rx_index], 1);
+        HAL_UART_Receive_IT(&huart1, (uint8_t*)&Rx_buff[rx_index], 1);
     }
 
     /* ---- USART1: TFMini LIDAR 1 ---- */
-    else if (huart->Instance == USART1)
+    else if (huart->Instance == UART4)
     {
         static uint8_t state1 = 0;
         switch (state1)
@@ -1382,7 +1382,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 }
                 break;
         }
-        HAL_UART_Receive_IT(&huart1, &rx1_byte, 1);
+        HAL_UART_Receive_IT(&huart4, &rx1_byte, 1);
     }
 
     /* ---- USART2: TFMini LIDAR 2 ---- */
