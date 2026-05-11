@@ -42,7 +42,7 @@
 
 #define RAD_TO_DEG  57.2957795f
 #define INPUT_MAX   1000
-#define PWM_MAX     999
+#define PWM_MAX    999
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -58,7 +58,9 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c2;
 
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim17;
 TIM_HandleTypeDef htim20;
@@ -148,6 +150,51 @@ float kd = 0.0f;
 uint8_t check = 0;
 uint8_t Data  = 0;
 char    cdc_buf[160];   /* single shared CDC TX buffer — sized for full debug line */
+
+
+/* ---------------- ODOMETRY ---------------- */
+
+#define PI 3.14159265359f
+#define CPR 1200.0f
+
+float R_wheel = 3.0f;
+
+/* Dead wheel offsets from robot center (cm) */
+float x_offset = 8.0f;
+float y_offset = 8.0f;
+
+/* Encoder counts */
+int32_t x_now = 0;
+int32_t y_now = 0;
+
+int32_t x_prev = 0;
+int32_t y_prev = 0;
+
+/* Delta ticks */
+int32_t dx_ticks = 0;
+int32_t dy_ticks = 0;
+
+/* Raw wheel distances */
+float dx_raw = 0.0f;
+float dy_raw = 0.0f;
+
+/* Corrected local robot motion */
+float dx_local = 0.0f;
+float dy_local = 0.0f;
+
+/* Global odometry */
+float odom_x = 0.0f;
+float odom_y = 0.0f;
+
+/* IMU heading */
+float theta_rad = 0.0f;
+float prev_theta_rad = 0.0f;
+float dtheta = 0.0f;
+
+/* Global delta motion */
+float dX = 0.0f;
+float dY = 0.0f;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -161,6 +208,8 @@ static void MX_TIM17_Init(void);
 static void MX_TIM20_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_UART4_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM5_Init(void);
 /* USER CODE BEGIN PFP */
 void MPU6050_Init(void);
 void MPU6050_Calibrate(void);
@@ -169,20 +218,11 @@ void Calculate_Angles(void);
 void Yaw_Stabilization_Update(void);
 void Holonomic_Mix(void);
 void Motor_Write(void);
+void Update_Odometry(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/////---------Arduino Friendly function----------
-//void digitalWrite(char pin, uint8_t num , uint8_t val ){
-//
-//	HAL_GPIO_WritePin(GPIO*(pin), GPIO_PIN_*(num), SET ?: RESET);
-//
-//}
-
-
-
-
 
 static int fmt_float(char *out, float v, int width, int dec2)
 {
@@ -447,6 +487,72 @@ void Motor_Write(void)
     __HAL_TIM_SET_COMPARE(&htim8,  TIM_CHANNEL_1, pwmBR);
 }
 
+void Update_Odometry(void)
+{
+    /* ---------------- READ ENCODERS ---------------- */
+
+    x_now = (int32_t)__HAL_TIM_GET_COUNTER(&htim2);
+    y_now = (int32_t)__HAL_TIM_GET_COUNTER(&htim5);
+
+    /* Delta ticks */
+    dx_ticks = x_now - x_prev;
+    dy_ticks = y_now - y_prev;
+
+    x_prev = x_now;
+    y_prev = y_now;
+
+    /* ---------------- TICKS TO DISTANCE ---------------- */
+
+    dx_raw = ((2.0f * PI * R_wheel) / CPR) * dx_ticks;
+    dy_raw = ((2.0f * PI * R_wheel) / CPR) * dy_ticks;
+
+    /* ---------------- YAW ---------------- */
+
+    theta_rad = yaw * (PI / 180.0f);
+
+    dtheta = theta_rad - prev_theta_rad;
+
+    prev_theta_rad = theta_rad;
+
+    /* ---------------- YAW COMPENSATION ---------------- */
+
+    dx_local = dx_raw - (x_offset * dtheta);
+    dy_local = dy_raw - (y_offset * dtheta);
+
+    /* ---------------- CROSS-AXIS SUPPRESSION ---------------- */
+
+    /* Dominant Y motion */
+    if (fabsf(dy_local) > 3.0f * fabsf(dx_local))
+    {
+        if (fabsf(dx_local) < fabsf(dy_local) * 0.08f)
+        {
+            dx_local = 0.0f;
+        }
+    }
+
+    /* Dominant X motion */
+    if (fabsf(dx_local) > 3.0f * fabsf(dy_local))
+    {
+        if (fabsf(dy_local) < fabsf(dx_local) * 0.08f)
+        {
+            dy_local = 0.0f;
+        }
+    }
+
+    /* ---------------- LOCAL TO GLOBAL ---------------- */
+
+    dX = (dx_local * cosf(theta_rad))
+       - (dy_local * sinf(theta_rad));
+
+    dY = (dx_local * sinf(theta_rad))
+       + (dy_local * cosf(theta_rad));
+
+    /* ---------------- GLOBAL POSITION ---------------- */
+
+    odom_x += dX;
+    odom_y += dY;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -487,10 +593,12 @@ int main(void)
   MX_TIM20_Init();
   MX_USART2_UART_Init();
   MX_UART4_Init();
+  MX_TIM2_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, &rx1_byte, 1);
+  HAL_UART_Receive_IT(&huart4, &rx1_byte, 1);
   HAL_UART_Receive_IT(&huart2, &rx2_byte, 1);
-  HAL_UART_Receive_IT(&huart4, (uint8_t*)&Rx_buff[rx_index], 1);
+  HAL_UART_Receive_IT(&huart1, (uint8_t*)&Rx_buff[rx_index], 1);
 
   MPU6050_Init();
   MPU6050_Calibrate();
@@ -501,14 +609,18 @@ int main(void)
   HAL_TIM_PWM_Start(&htim8,  TIM_CHANNEL_1);
 
   prevYawTime = HAL_GetTick();
+  HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {  /* --- IMU --- */
+
       MPU6050_Read_All();
       Calculate_Angles();
+      Update_Odometry();
 
       /* --- Yaw PID --- */
 
@@ -562,14 +674,13 @@ int main(void)
           fmt_float(s_roll,  roll,  5, 2);
           fmt_float(s_pitch, pitch, 5, 2);
           fmt_float(s_yaw,   yaw,   6, 2);
-
           int len = snprintf(cdc_buf, sizeof(cdc_buf),
-              "D1:%2u.%03um D2:%2u.%03um | LX:%5d LY:%5d RX:%5d | R:%s P:%s Y:%s\r\n",
-              m_int1, m_frac1,
-              m_int2, m_frac2,
-              lx, ly, rx_joy,
-              s_roll, s_pitch, s_yaw);
-
+          "D1:%2u.%03um D2:%2u.%03um | LX:%5d LY:%5d RX:%5d | R:%s P:%s Y:%s | OX:%0.2f OY:%0.2f\r\n",
+          m_int1, m_frac1,
+          m_int2, m_frac2,
+          lx, ly, rx_joy,
+          s_roll, s_pitch, s_yaw,
+          odom_x, odom_y);
           CDC_Transmit_FS((uint8_t*)cdc_buf, (uint16_t)len);
       }
 
@@ -679,6 +790,55 @@ static void MX_I2C2_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -699,7 +859,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 8;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 777;
+  htim3.Init.Period = 500;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -728,6 +888,55 @@ static void MX_TIM3_Init(void)
 }
 
 /**
+  * @brief TIM5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM5_Init(void)
+{
+
+  /* USER CODE BEGIN TIM5_Init 0 */
+
+  /* USER CODE END TIM5_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM5_Init 1 */
+
+  /* USER CODE END TIM5_Init 1 */
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 0;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 4294967295;
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim5, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM5_Init 2 */
+
+  /* USER CODE END TIM5_Init 2 */
+
+}
+
+/**
   * @brief TIM8 Initialization Function
   * @param None
   * @retval None
@@ -749,7 +958,7 @@ static void MX_TIM8_Init(void)
   htim8.Instance = TIM8;
   htim8.Init.Prescaler = 8;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 777;
+  htim8.Init.Period = 500;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -820,7 +1029,7 @@ static void MX_TIM17_Init(void)
   htim17.Instance = TIM17;
   htim17.Init.Prescaler = 8;
   htim17.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim17.Init.Period = 777;
+  htim17.Init.Period = 500;
   htim17.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim17.Init.RepetitionCounter = 0;
   htim17.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -884,7 +1093,7 @@ static void MX_TIM20_Init(void)
   htim20.Instance = TIM20;
   htim20.Init.Prescaler = 8;
   htim20.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim20.Init.Period = 777;
+  htim20.Init.Period = 500;
   htim20.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim20.Init.RepetitionCounter = 0;
   htim20.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -1125,7 +1334,7 @@ static void MX_GPIO_Init(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     /* ---- UART4: joystick data ---- */
-    if (huart->Instance == UART4)
+    if (huart->Instance == USART1)
     {
         uint8_t b = Rx_buff[rx_index];
 
@@ -1142,11 +1351,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             else
                 rx_index = 0;   /* overflow guard */
         }
-        HAL_UART_Receive_IT(&huart4, (uint8_t*)&Rx_buff[rx_index], 1);
+        HAL_UART_Receive_IT(&huart1, (uint8_t*)&Rx_buff[rx_index], 1);
     }
 
     /* ---- USART1: TFMini LIDAR 1 ---- */
-    else if (huart->Instance == USART1)
+    else if (huart->Instance == UART4)
     {
         static uint8_t state1 = 0;
         switch (state1)
@@ -1173,7 +1382,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 }
                 break;
         }
-        HAL_UART_Receive_IT(&huart1, &rx1_byte, 1);
+        HAL_UART_Receive_IT(&huart4, &rx1_byte, 1);
     }
 
     /* ---- USART2: TFMini LIDAR 2 ---- */
@@ -1223,8 +1432,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
