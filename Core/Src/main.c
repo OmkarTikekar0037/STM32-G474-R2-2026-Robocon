@@ -152,6 +152,23 @@ float kd = 0.0f;
 uint8_t check = 0;
 uint8_t Data  = 0;
 char    cdc_buf[160];   /* single shared CDC TX buffer — sized for full debug line */
+
+
+/* Proximity Sensors */
+#define PROX_FRONT_1_PORT GPIOA
+#define PROX_FRONT_1_PIN  GPIO_PIN_4
+
+#define PROX_FRONT_2_PORT GPIOA
+#define PROX_FRONT_2_PIN  GPIO_PIN_6
+
+#define PROX_REAR_1_PORT  GPIOA
+#define PROX_REAR_1_PIN   GPIO_PIN_5
+
+#define PROX_REAR_2_PORT  GPIOB
+#define PROX_REAR_2_PIN   GPIO_PIN_3
+
+#define WEAPON_PROX_PORT  GPIOA
+#define WEAPON_PROX_PIN   GPIO_PIN_0
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -225,12 +242,12 @@ void MPU6050_Init(void)
 
     ret = HAL_I2C_IsDeviceReady(&hi2c2, MPU6050_ADDR, 3, 1000);
     if (ret == HAL_OK){
-     	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,SET);
+     	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,RESET);
      }
 
     if (ret != HAL_OK)
     {
-    	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,RESET);
+    	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,SET);
         len = snprintf(cdc_buf, sizeof(cdc_buf), "ERR: I2C not ready (%d)\r\n", ret);
         CDC_Transmit_FS((uint8_t*)cdc_buf, len);
         return;
@@ -243,7 +260,7 @@ void MPU6050_Init(void)
 
     if (check != 0x68)
     {
-    	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,RESET);
+    	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,SET);
     	len = snprintf(cdc_buf, sizeof(cdc_buf), "ERR: wrong WHO_AM_I — check wiring\r\n");
         CDC_Transmit_FS((uint8_t*)cdc_buf, len);
         return;
@@ -528,11 +545,11 @@ int main(void)
 
           if(HAL_I2C_IsDeviceReady(&hi2c2, MPU6050_ADDR, 1, 10) == HAL_OK)
           {
-              HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+              HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
           }
           else
           {
-              HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+              HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
           }
       }
 
@@ -619,6 +636,23 @@ int main(void)
               s_roll, s_pitch, s_yaw);
 
           CDC_Transmit_FS((uint8_t*)cdc_buf, (uint16_t)len);
+          HAL_Delay(1);
+          len = snprintf(cdc_buf, sizeof(cdc_buf),
+                         "<PROX:%d,%d,%d,%d>\r\n",
+                         HAL_GPIO_ReadPin(PROX_FRONT_1_PORT, PROX_FRONT_1_PIN),
+                         HAL_GPIO_ReadPin(PROX_FRONT_2_PORT, PROX_FRONT_2_PIN),
+                         HAL_GPIO_ReadPin(PROX_REAR_1_PORT,  PROX_REAR_1_PIN),
+                         HAL_GPIO_ReadPin(PROX_REAR_2_PORT,  PROX_REAR_2_PIN));
+
+          CDC_Transmit_FS((uint8_t*)cdc_buf, len);
+
+          HAL_Delay(1);
+
+          len = snprintf(cdc_buf, sizeof(cdc_buf),
+                         "<WPROX:%d>\r\n",
+                         HAL_GPIO_ReadPin(WEAPON_PROX_PORT, WEAPON_PROX_PIN));
+
+          CDC_Transmit_FS((uint8_t*)cdc_buf, len);
       }
 
     /* USER CODE END WHILE */
@@ -1157,11 +1191,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : PA0 PA1 PA4 PA5
+                           PA6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5
+                          |GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PB1 PB11 PB4 PB9 */
   GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_11|GPIO_PIN_4|GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -1271,8 +1319,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
