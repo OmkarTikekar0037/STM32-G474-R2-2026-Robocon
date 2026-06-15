@@ -92,6 +92,10 @@ char     Rx_buff[64];
 uint8_t  rx_index       = 0;
 volatile uint8_t uart_line_ready = 0;
 
+/* ---- USB joystick receive ---- */
+char USB_Rx_buff[64];
+volatile uint8_t usb_line_ready = 0;
+
 /* ---- Joystick axes ---- */
 int lx = 0, ly = 0, rx_joy = 0, ry = 0;   /* renamed rx → rx_joy (avoids clash with UART handle) */
 int l1 = 0, r1 = 0, l2 = 0, r2 = 0;
@@ -220,8 +224,13 @@ void MPU6050_Init(void)
     HAL_Delay(50);
 
     ret = HAL_I2C_IsDeviceReady(&hi2c2, MPU6050_ADDR, 3, 1000);
+    if (ret == HAL_OK){
+     	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,SET);
+     }
+
     if (ret != HAL_OK)
     {
+    	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,RESET);
         len = snprintf(cdc_buf, sizeof(cdc_buf), "ERR: I2C not ready (%d)\r\n", ret);
         CDC_Transmit_FS((uint8_t*)cdc_buf, len);
         return;
@@ -234,7 +243,8 @@ void MPU6050_Init(void)
 
     if (check != 0x68)
     {
-        len = snprintf(cdc_buf, sizeof(cdc_buf), "ERR: wrong WHO_AM_I — check wiring\r\n");
+    	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_11,RESET);
+    	len = snprintf(cdc_buf, sizeof(cdc_buf), "ERR: wrong WHO_AM_I — check wiring\r\n");
         CDC_Transmit_FS((uint8_t*)cdc_buf, len);
         return;
     }
@@ -510,6 +520,22 @@ int main(void)
       MPU6050_Read_All();
       Calculate_Angles();
 
+      static uint32_t i2cCheckTick = 0;
+
+      if(HAL_GetTick() - i2cCheckTick >= 500)
+      {
+          i2cCheckTick = HAL_GetTick();
+
+          if(HAL_I2C_IsDeviceReady(&hi2c2, MPU6050_ADDR, 1, 10) == HAL_OK)
+          {
+              HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+          }
+          else
+          {
+              HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+          }
+      }
+
       /* --- Yaw PID --- */
 
 
@@ -542,6 +568,28 @@ int main(void)
 
           }
       }
+
+      if (usb_line_ready)
+           {
+               usb_line_ready = 0;
+
+               if (sscanf(USB_Rx_buff,
+                          "%d,%d,%d,%d,%d,%d,%d,%d",
+                          &lx,
+                          &ly,
+                          &rx_joy,
+                          &ry,
+                          &l2,
+                          &r2,
+                          &l1,
+                          &r1) == 8)
+               {
+                   Yaw_Stabilization_Update();
+                   Holonomic_Mix();
+                   Motor_Write();
+
+               }
+           }
 
       /* --- CDC debug print @ 10 Hz --- */
       static uint32_t dbgTick = 0;
