@@ -152,7 +152,7 @@ float kd = 0.0f;
 uint8_t check = 0;
 uint8_t Data  = 0;
 char    cdc_buf[160];   /* single shared CDC TX buffer — sized for full debug line */
-
+int i;
 
 /* Proximity Sensors */
 #define PROX_FRONT_1_PORT GPIOA
@@ -474,6 +474,16 @@ void Motor_Write(void)
     __HAL_TIM_SET_COMPARE(&htim8,  TIM_CHANNEL_1, pwmBR);
 }
 
+void Stop(){
+
+    __HAL_TIM_SET_COMPARE(&htim20, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim3,  TIM_CHANNEL_3, 0);
+    __HAL_TIM_SET_COMPARE(&htim17, TIM_CHANNEL_1, 0);
+    __HAL_TIM_SET_COMPARE(&htim8,  TIM_CHANNEL_1, 0);
+
+
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -607,6 +617,13 @@ int main(void)
 
                }
            }
+//      else if(!usb_line_ready  ){
+//
+//    	  Stop();
+//    	  HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_11);
+//    	  HAL_Delay(200);
+//
+//      }
 
       /* --- CDC debug print @ 10 Hz --- */
       static uint32_t dbgTick = 0;
