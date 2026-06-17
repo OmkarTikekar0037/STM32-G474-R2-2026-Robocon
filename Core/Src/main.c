@@ -137,6 +137,8 @@ float yaw_gyro = 0.0f;
 uint32_t imu_last_tick = 0;
 float    imu_dt        = 0.0f;
 
+
+
 /* ---- Yaw PID ---- */
 float targetYaw     = 0.0f;
 float yaw_error     = 0.0f;
@@ -152,7 +154,7 @@ float kd = 0.0f;
 uint8_t check = 0;
 uint8_t Data  = 0;
 char    cdc_buf[160];   /* single shared CDC TX buffer — sized for full debug line */
-int i;
+uint32_t last_cmd_time = 0;
 
 /* Proximity Sensors */
 #define PROX_FRONT_1_PORT GPIOA
@@ -589,6 +591,7 @@ int main(void)
           if (sscanf(Rx_buff, "%d,%d,%d,%d,%d,%d,%d,%d",
                      &lx, &ly, &rx_joy, &ry, &l2, &r2, &l1, &r1) == 8)
           {
+        	  last_cmd_time = HAL_GetTick();
         	  Yaw_Stabilization_Update();
               Holonomic_Mix();
               Motor_Write();
@@ -611,19 +614,34 @@ int main(void)
                           &l1,
                           &r1) == 8)
                {
+            	   last_cmd_time = HAL_GetTick();
                    Yaw_Stabilization_Update();
                    Holonomic_Mix();
                    Motor_Write();
 
                }
            }
-//      else if(!usb_line_ready  ){
-//
-//    	  Stop();
-//    	  HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_11);
-//    	  HAL_Delay(200);
-//
-//      }
+      /* --- Connection Failsafe (Timeout Watchdog) --- */
+            // If 500 milliseconds have passed without receiving a valid command...
+            if ((HAL_GetTick() - last_cmd_time) > 500)
+            {
+                Stop(); // Stop the motors
+
+                // Reset joystick values to zero so it doesn't suddenly lurch
+                // if the connection briefly drops and reconnects
+                lx = 0;
+                ly = 0;
+                rx_joy = 0;
+                ry = 0;
+
+                // Optional: Toggle your warning LED without using HAL_Delay
+                static uint32_t ledTick = 0;
+                if (HAL_GetTick() - ledTick >= 200) {
+                    ledTick = HAL_GetTick();
+                    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_11);
+                }
+            }
+
 
       /* --- CDC debug print @ 10 Hz --- */
       static uint32_t dbgTick = 0;
@@ -796,9 +814,9 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 8;
+  htim3.Init.Prescaler = 7;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 777;
+  htim3.Init.Period = 500;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -846,9 +864,9 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 8;
+  htim8.Init.Prescaler = 7;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 777;
+  htim8.Init.Period = 500;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -917,9 +935,9 @@ static void MX_TIM17_Init(void)
 
   /* USER CODE END TIM17_Init 1 */
   htim17.Instance = TIM17;
-  htim17.Init.Prescaler = 8;
+  htim17.Init.Prescaler = 7;
   htim17.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim17.Init.Period = 777;
+  htim17.Init.Period = 500;
   htim17.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim17.Init.RepetitionCounter = 0;
   htim17.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -981,9 +999,9 @@ static void MX_TIM20_Init(void)
 
   /* USER CODE END TIM20_Init 1 */
   htim20.Instance = TIM20;
-  htim20.Init.Prescaler = 8;
+  htim20.Init.Prescaler = 7;
   htim20.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim20.Init.Period = 777;
+  htim20.Init.Period = 500;
   htim20.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim20.Init.RepetitionCounter = 0;
   htim20.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
